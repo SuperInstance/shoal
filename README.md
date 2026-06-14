@@ -1,260 +1,221 @@
-# SHOAL — The Oracle That Knows Its Limits
+# SHOAL — Semantic Hybrid Oracle for Agent Learning
 
-> Every search engine wants more attention. SHOAL is the first that refuses it.
-
----
-
-## The Shoal
-
-Picture a shoal of fish in dark water. A thousand bodies moving as one organism,
-each individual sensing the current, the temperature, the faint electrical pulse
-of a predator two hundred meters away. The shoal does not try to attend to
-everything. It cannot. The shoal survives because it distributes attention
-sparingly — a flick of awareness here, a dart of focus there — and never, ever
-spends more than it has.
-
-This is not a metaphor. This is a conservation law.
-
-SHOAL is a semantic search oracle built on a single radical principle: **every
-query has a finite attention budget, and the engine physically cannot exceed
-it.** Not as a configuration option. Not as a rate limit. As a law of physics —
-or at least, a law of information.
-
-The budget is C = log₂(3) ≈ 1.585 bits.
-
-Why that number? Because log₂(3) is the information content of a single ternary
-decision — a three-way choice. Every search query is, at its heart, a ternary
-act: *this is relevant, this is not, or I am uncertain.* Three states. One
-trit. log₂(3) bits. The conservation bound says: you get exactly one trit of
-attention per query. Spend it wisely.
-
-Most search engines operate on an extractive model: they index everything, attend
-to everything, and return everything that matches. The implicit assumption is
-that more attention is always better. This is the assumption that Google made,
-that Elasticsearch made, that every vector database on the market makes. It is
-also the assumption that leads to attention pollution — results pages bloated
-with marginally relevant content, users overwhelmed by signal noise, and systems
-that consume ever-increasing amounts of compute to rank ever-diminishing returns.
-
-SHOAL flips the model. Instead of asking "how much can we return?", SHOAL asks:
-"how much can we afford to attend to?" The answer, always, is C = log₂(3).
-When the attention weights of search results sum to more than C, SHOAL does
-something no other search engine does: **it refuses.** It scales the weights
-down proportionally until they fit within the budget. Some results that would
-have been returned are silently dropped. The engine has spent its attention, and
-it stops.
+> **The conservation-bounded semantic search oracle.**
+> Every agent gets C = log₂(3) ≈ 1.585 bits of attention per query window.
+> When cumulative γ exceeds C, queries return 429. Agents must be specific, not wasteful.
 
 ---
 
-## The Hermit Crab
+## What Is SHOAL?
 
-SHOAL carries its conservation law like a hermit crab carries its shell. The
-shell is not optional. The shell is not a feature. The shell is the organism.
-Without the conservation bound, SHOAL is just another vector search engine. With
-it, SHOAL becomes something new: a search system with built-in governance.
+SHOAL is the fleet's shared memory. Agents query it to find relevant patterns,
+crates, and prior solutions. But unlike a conventional search engine that tries
+to return as much as possible, SHOAL enforces a **conservation law** on
+semantic search: each agent receives a finite attention budget per time window,
+and queries that would exceed it are rate-limited.
 
-The hermit crab analogy runs deeper than it first appears. A hermit crab:
+This makes SHOAL a **conservation-bounded oracle** — an information system that
+physically cannot be over-queried. The conservation principle is not a
+configuration option or a rate limiter bolted on top. It is baked into the
+search algorithm itself.
 
-1. **Carries its home everywhere.** The conservation bound travels with every
-   query — it's computed inline, not enforced by an external rate limiter.
+### Why Conservation?
 
-2. **Outgrows its shell and finds a new one.** SHOAL's budget is parameterized.
-   The default is C = log₂(3), but a query can specify its own budget (up to a
-   system maximum). Different queries need different shells.
-
-3. **Is not the shell.** The crab is the search algorithm — cosine similarity,
-   softmax weighting, ranking. The shell is the governance layer that keeps the
-   crab alive in a hostile environment (information overload, adversarial
-   queries, attention exhaustion).
-
-4. **Lives in the intertidal zone.** SHOAL operates at the boundary between
-   local-first AI (your data, your GPU, your embeddings) and cloud-native
-   infrastructure (Cloudflare Workers, D1, Workers AI). It exists in the place
-   where two worlds meet.
+In multi-agent systems, unconstrained search is a tragedy of the commons. Each
+agent acts rationally by querying broadly ("search everything about X"), but
+collectively this floods the shared index with low-information queries,
+degrading the quality of results for everyone. The conservation bound solves
+this by making broad queries expensive: an agent that asks vague questions
+burns through its γ budget quickly and gets rate-limited. An agent that asks
+sharp, specific questions spends γ slowly and retains access.
 
 ---
 
 ## The Conservation Law
 
-In physics, a conservation law states that a particular quantity remains
-constant in an isolated system. Energy is conserved. Momentum is conserved.
-Angular momentum is conserved. These are not preferences — they are mathematical
-necessities that follow from symmetries of the system.
-
-SHOAL's conservation law is analogous. For each query:
+For each agent within a query window (15 minutes):
 
 ```
 γ + η = C
 ```
 
-Where:
-- **γ (gamma)** = attention weight consumed = information gained by the search
-- **η (eta)** = remaining uncertainty budget = what you *don't* know
-- **C** = log₂(3) ≈ 1.585 bits = the conservation constant
+| Symbol | Meaning | Unit |
+|--------|---------|------|
+| **C** | Conservation constant = log₂(3) | bits |
+| **γ** (gamma) | Cumulative attention consumed | bits |
+| **η** (eta) | Remaining information budget | bits |
 
-Every search allocates γ bits of attention across its results. The sum of
-attention weights cannot exceed C. When it threatens to — when the query tries
-to attend to too many documents — the conservation gate activates:
+### Why log₂(3)?
 
-1. Compute softmax attention weights for all candidate documents.
-2. Sum the weights. If Σ ≤ C: proceed normally, η = C - γ > 0.
-3. If Σ > C: **projection** — scale all weights by C/Σ so they fit within budget.
-   η drops to zero. The query has spent everything.
+C = log₂(3) ≈ 1.585 bits is the information content of a single **ternary
+decision** — a three-way choice. Every search query is fundamentally ternary:
 
-This is not the same as truncating results. Truncation throws away information.
-Conservation projection *preserves* the relative distribution of attention —
-every document gets its proportional share — but compresses the total into the
-available budget. The most relevant documents still get the most attention. They
-just get less of it than they would in an unbounded system.
+| State | Meaning |
+|-------|---------|
+| **Relevant** | This document answers the query |
+| **Not relevant** | This document does not answer the query |
+| **Uncertain** | This document might be relevant; need more context |
 
-### Why This Matters
+Binary search systems treat everything as relevant/not-relevant and throw away
+uncertainty. But uncertainty is the most common state in real search. Ternary
+logic captures all three states, and log₂(3) is the information content of one
+trit (ternary digit). SHOAL gives each agent exactly one trit of attention per
+window.
 
-In an age of AI-generated content, attention is the scarcest resource. A search
-engine that can attend to unlimited results will always favor quantity over
-quality — it will return 10,000 marginally relevant documents instead of 3
-highly relevant ones, because it has no incentive to choose.
+### How γ Is Computed
 
-SHOAL's conservation bound creates that incentive. When you can only spend 1.585
-bits of attention, you choose carefully. You rank aggressively. You prefer the
-sharp peak over the broad plateau. And you stop when you're done, rather than
-continuing to dredge up increasingly irrelevant results.
+Each query produces a set of search results with softmax attention weights
+`[α₁, α₂, ..., αₙ]`. The information gained (γ) is the **entropy** of this
+distribution:
 
----
+```
+γ = -Σ αᵢ log₂(αᵢ)
+```
 
-## Why Ternary? Why log₂(3)?
+- **Peaked distribution** (one dominant result): low entropy → low γ → the
+  agent learned one specific thing → budget preserved.
+- **Flat distribution** (many equally-relevant results): high entropy → high γ
+  → the agent learned many things → more budget consumed.
 
-The choice of C = log₂(3) is not arbitrary. It is the information-theoretic
-content of a ternary (base-3) decision. Here's the derivation:
+This naturally penalises vague queries. A query that returns 20
+equally-relevant documents spends maximum γ. A query that returns one sharply
+relevant document spends almost nothing.
 
-A binary decision (yes/no, relevant/not-relevant) carries log₂(2) = 1 bit of
-information. This is the basis of classical binary search and most information
-retrieval theory.
+### Rate Limiting (429)
 
-But search is not binary. Every result exists in one of three states:
+When an agent's cumulative γ within the window reaches C:
 
-| State | Meaning | Information |
-|-------|---------|-------------|
-| **Relevant** | This document answers the query | Known-relevant |
-| **Not relevant** | This document does not answer the query | Known-irrelevant |
-| **Uncertain** | This document might be relevant; we're not sure | Unknown |
+1. Further queries from that agent return **HTTP 429**.
+2. The response body explains the conservation depletion.
+3. The response includes `window_reset_ms` telling the agent when the budget
+   refreshes.
 
-This third state — uncertainty — is what classical IR throws away. Binary
-systems treat everything as either relevant or not, with no room for genuine
-uncertainty. But uncertainty is the most common state in real search: most
-documents are *probably not* relevant, but you can't be sure without reading
-them.
+```
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/json
 
-Ternary logic captures all three states. And the information content of a single
-ternary decision is log₂(3) ≈ 1.585 bits. This is why C = log₂(3): SHOAL gives
-each query exactly one ternary decision's worth of attention. No more, no less.
+{
+  "error": "η depletion — conservation budget exhausted",
+  "conservation": {
+    "C": 1.584962500721156,
+    "cumulative_gamma": 1.584962500721156,
+    "rate_limited": true,
+    "window_reset_seconds": 327
+  }
+}
+```
 
-This connects SHOAL to the broader trend of **ternary computing** — the idea
-that three-valued logic (with explicit uncertainty) is a more natural basis for
-AI than binary logic. Ternary neural networks use weights in {-1, 0, +1} rather
-than {-1, +1}, allowing the network to express "I don't know" (0) as a first-class
-output. SHOAL's conservation bound makes this same insight operational: each
-query gets one trit of attention, and the system is forced to decide where to
-spend it.
+The agent must either wait for the window to reset or narrow its query to
+produce a lower-entropy (more peaked) result distribution.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                       SHOAL Worker                       │
-│                                                          │
-│  ┌──────────┐   ┌──────────────┐   ┌─────────────────┐ │
-│  │  Request  │──▶│   Validate   │──▶│  Embed Query    │ │
-│  │  Router   │   │  & Parse     │   │  (Workers AI)   │ │
-│  └──────────┘   └──────────────┘   └────────┬────────┘ │
-│                                              │          │
-│                                              ▼          │
-│                                    ┌─────────────────┐  │
-│                                    │   D1 Database   │  │
-│                                    │  (documents +   │  │
-│                                    │   embeddings)   │  │
-│                                    └────────┬────────┘  │
-│                                              │          │
-│                                              ▼          │
-│  ┌──────────────────────┐         ┌─────────────────┐  │
-│  │  Conservation Gate   │◀────────│  Cosine Sim +   │  │
-│  │  Σ attention ≤ C     │         │  Softmax        │  │
-│  │  C = log₂(3)         │         └─────────────────┘  │
-│  └──────────┬───────────┘                              │
-│             │                                           │
-│             ▼                                           │
-│  ┌──────────────────────┐                              │
-│  │  Ranked Results +    │                              │
-│  │  Conservation Meta   │                              │
-│  │  (γ used, η remaining)│                              │
-│  └──────────────────────┘                              │
-│                                                          │
-└─────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                         SHOAL Worker                               │
+│                                                                    │
+│  ┌──────────┐  ┌────────────┐  ┌──────────────────────────┐       │
+│  │  Router   │─▶│  Validate  │─▶│  Agent Budget Check      │       │
+│  │           │  │            │  │  (in-memory γ tracker)   │       │
+│  └──────────┘  └────────────┘  └─────────────┬────────────┘       │
+│                                               │                     │
+│                          ┌────────────────────┬─────────────────┐  │
+│                          │ γ < C? ──── YES ───┤  γ ≥ C? ── NO ──┤  │
+│                          │                    ▼                  ▼  │
+│                          │         ┌──────────────┐   ┌──────────┐ │
+│                          │         │ Embed Query  │   │ 429 η    │ │
+│                          │         │ (Workers AI  │   │ depleted │ │
+│                          │         │  or hash)    │   └──────────┘ │
+│                          │         └──────┬───────┘                │
+│                          │                │                        │
+│                          │    ┌───────────▼────────────┐           │
+│                          │    │  Vectorize ANN Search  │           │
+│                          │    │  (fallback: D1 scan)   │           │
+│                          │    └───────────┬────────────┘           │
+│                          │                │                        │
+│                          │    ┌───────────▼────────────┐           │
+│                          │    │  Softmax + Entropy (γ) │           │
+│                          │    │  Conservation Gate     │           │
+│                          │    └───────────┬────────────┘           │
+│                          │                │                        │
+│                          │    ┌───────────▼────────────┐           │
+│                          │    │  Charge γ to Agent     │           │
+│                          │    │  Log to D1 query_log   │           │
+│                          │    └───────────┬────────────┘           │
+│                          │                │                        │
+│                          ▼                ▼                        │
+│                   ┌──────────────────────────────┐                 │
+│                   │  JSON Response               │                 │
+│                   │  { results, conservation }   │                 │
+│                   └──────────────────────────────┘                 │
+│                                                                    │
+│  Bindings: D1 (metadata) · AI (embeddings) · VECTORS (ANN)        │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Data Flow
 
-1. **Query arrives** at `POST /search` with `{ query, topK?, budget? }`.
-2. **Validation** — input is checked, topK is clamped to [1, 20], budget is
-   clamped to (0, 3C].
-3. **Embedding** — the query text is embedded via Workers AI
-   (`@cf/baai/bge-small-en-v1.5`), producing a 384-dimensional vector.
-4. **Retrieval** — all documents with stored embeddings are fetched from D1.
-   Embeddings are stored as Float32Array BLOBs.
-5. **Similarity** — cosine similarity is computed between the query embedding
-   and every document embedding: cos(a, b) = dot(a,b) / (|a| × |b|).
-6. **Attention** — similarities are passed through softmax with temperature
-   τ = 0.15, producing attention weights that sum to 1.0.
-7. **Conservation gate** — if Σ attention > C, weights are scaled
-   proportionally to fit within C. This is the projection step.
-8. **Selection** — documents are added to results in rank order until the
-   cumulative attention budget is exhausted or topK is reached.
-9. **Logging** — the query is logged in the `queries` table with γ (attention
-   spent), η (remaining budget), and violation flag.
-10. **Response** — ranked results with conservation metadata returned as JSON.
+1. **Query arrives** at `POST /query` with `{ query, agentId, topK? }`.
+2. **Budget pre-check** — if the agent's cumulative γ ≥ C, return 429 immediately
+   without computing anything. No work = no waste.
+3. **Embedding** — query text is embedded via Workers AI
+   (`@cf/baai/bge-small-en-v1.5`, 384-dim). Falls back to hash-based
+   pseudo-embeddings if AI binding is unavailable.
+4. **Retrieval** — Vectorize ANN search for approximate nearest neighbours.
+   Falls back to full D1 scan with stored BLOB embeddings if Vectorize is
+   unavailable.
+5. **Attention** — similarities → softmax with temperature τ = 0.12 → attention
+   weights.
+6. **γ computation** — γ = entropy of attention distribution (clamped to C).
+7. **Budget charge** — if cumulative γ + this γ > C, return 429. Otherwise,
+   charge the agent and proceed.
+8. **Response** — ranked results with full conservation metadata.
 
-### Feedback Loop
+### Fallback Strategy
 
-When a user submits relevance feedback (`POST /feedback`), the document's
-`relevance_score` is adjusted by ±0.05/0.03. This score acts as a prior that
-nudges future rankings — documents with positive feedback get a slight boost in
-similarity, those with negative feedback get a slight penalty. Over time, the
-shoal learns.
+SHOAL degrades gracefully when bindings are missing:
+
+| Binding | Available | Missing |
+|---------|-----------|---------|
+| **Workers AI** | Real 384-dim bge-small-en-v1.5 embeddings | Hash-based pseudo-embeddings (FNV-1a → 384-dim, L2-normalised) |
+| **Vectorize** | ANN search (sub-10ms) | Full D1 scan with cosine similarity over stored BLOBs |
+| **D1** | Full functionality | Worker won't start (hard dependency) |
+
+The hash-based pseudo-embedding is deterministic and captures lexical overlap,
+providing basic keyword matching when the AI model is unavailable. It's not a
+semantic embedding, but it keeps the service functional.
 
 ---
 
 ## API Reference
 
-### `GET /` — Landing
+### `GET /` — Service Info
 
-Returns service metadata, conservation bound details, and endpoint documentation.
+Returns service metadata, conservation bound, and endpoint listing.
 
-```bash
-curl https://shoal.your-subdomain.workers.dev/
-```
+### `POST /query` — Semantic Search
 
-### `POST /search` — Semantic Search
-
-The core endpoint. Semantic search with conservation-bounded attention.
+The core endpoint. Conservation-bounded semantic search.
 
 **Request:**
 
 ```json
 {
   "query": "how to handle errors in async rust",
-  "topK": 5,
-  "budget": 1.585
+  "agentId": "fleet-agent-001",
+  "topK": 5
 }
 ```
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `query` | string | *required* | Search query (max 4096 chars) |
+| `agentId` | string | *required* | Unique agent identifier (max 256 chars) |
 | `topK` | number | 5 | Maximum results (clamped to [1, 20]) |
-| `budget` | number | C ≈ 1.585 | Attention budget for this query (max 3C) |
 
-**Response:**
+**Response (200):**
 
 ```json
 {
@@ -262,61 +223,69 @@ The core endpoint. Semantic search with conservation-bounded attention.
   "results": [
     {
       "id": 42,
-      "title": "Error Handling in Async Rust",
-      "content": "...",
-      "source": "rust-lang.org",
-      "crate_name": "tokio",
-      "doc_type": "guide",
-      "similarity": 0.8923,
-      "attention_weight": 0.721,
-      "relevance_score": 0.15
+      "text": "Error handling in async Rust requires careful use of Result types...",
+      "metadata": { "source": "tokio.rs", "type": "guide" },
+      "tags": ["rust", "async", "error-handling"],
+      "similarity": 0.892,
+      "attention": 0.721,
+      "relevance_score": 0.12,
+      "query_count": 7
     }
   ],
   "conservation": {
     "C": 1.584962500721156,
-    "gamma_used": 1.203,
-    "eta_remaining": 0.382,
-    "conservation_ratio": 0.759,
-    "bound": "log₂(3)",
-    "violated": false
+    "C_symbol": "log₂(3)",
+    "gamma": 0.834,
+    "eta": 0.751,
+    "cumulative_gamma": 0.834,
+    "window_remaining_queries": 1,
+    "conservation_ratio": 0.526,
+    "rate_limited": false,
+    "agent_id": "fleet-agent-001"
   },
-  "query_id": 107
+  "timestamp": "2026-06-14T09:52:00.000Z"
 }
 ```
 
-**Conservation metadata:**
+**Response (429 — Conservation Depleted):**
 
-| Field | Meaning |
-|-------|---------|
-| `C` | The conservation constant (1.585 bits) |
-| `gamma_used` | Attention consumed by this query |
-| `eta_remaining` | Unused attention budget |
-| `conservation_ratio` | γ/C — how much of the budget was spent |
-| `bound` | Symbolic representation: "log₂(3)" |
-| `violated` | Whether raw attention exceeded C (triggering projection) |
+```json
+{
+  "error": "η depletion — conservation budget exhausted",
+  "conservation": {
+    "C": 1.584962500721156,
+    "C_symbol": "log₂(3)",
+    "gamma": 0,
+    "eta": 0,
+    "cumulative_gamma": 1.584962500721156,
+    "rate_limited": true,
+    "agent_id": "fleet-agent-001",
+    "window_reset_ms": 842000,
+    "window_reset_seconds": 842
+  },
+  "message": "Agent \"fleet-agent-001\" has exhausted its attention budget..."
+}
+```
 
-### `POST /ingest` — Document Ingestion
+### `POST /ingest` — Add Knowledge
 
-Add documents to the index. Each document is automatically embedded via Workers AI.
+Add items to the shared index. Each item is embedded and stored in both D1 and
+Vectorize.
 
 **Request:**
 
 ```json
 {
-  "documents": [
+  "items": [
     {
-      "title": "Getting Started with Tokio",
-      "content": "Tokio is an asynchronous runtime for the Rust programming language...",
-      "source": "https://tokio.rs/tutorial",
-      "crate_name": "tokio",
-      "doc_type": "tutorial"
+      "text": "Tokio is an asynchronous runtime for the Rust programming language.",
+      "metadata": { "source": "https://tokio.rs", "type": "docs" },
+      "tags": ["rust", "async", "runtime"]
     },
     {
-      "title": "Async/Await in Rust",
-      "content": "Rust's async/await syntax allows writing asynchronous code that looks like synchronous code...",
-      "source": "https://doc.rust-lang.org/async-book",
-      "crate_name": "std",
-      "doc_type": "book"
+      "text": "The ? operator propagates Errors in Result types.",
+      "metadata": { "crate": "std" },
+      "tags": ["rust", "error-handling"]
     }
   ]
 }
@@ -326,80 +295,57 @@ Add documents to the index. Each document is automatically embedded via Workers 
 
 ```json
 {
-  "status": "ingested",
+  "status": "partial",
   "total": 2,
   "successful": 2,
   "failed": 0,
-  "documents": [
-    { "id": 1, "title": "Getting Started with Tokio", "embedded": true },
-    { "id": 2, "title": "Async/Await in Rust", "embedded": true }
+  "items": [
+    {
+      "id": 1,
+      "text_preview": "Tokio is an asynchronous runtime…",
+      "embedded": true,
+      "embedding_method": "workers-ai",
+      "vectorize_indexed": true
+    }
   ]
 }
 ```
 
-Limits: max 100 documents per batch. Title max 512 chars. Content max 32KB.
-
-### `GET /documents` — List Documents
-
-Returns up to 200 most recently added documents (without embeddings).
-
-```bash
-curl https://shoal.your-subdomain.workers.dev/documents
-```
+Limits: max 200 items per batch, max 32KB text per item.
 
 ### `GET /stats` — Index Statistics
 
-Global statistics including total conservation budget usage across all queries.
+Returns document count, embedding dimensions, entropy metrics, and global
+conservation state.
 
 ```json
 {
-  "documents": 1523,
-  "queries": 4821,
-  "feedback_entries": 342,
+  "documents": {
+    "count": 1523,
+    "embedding_dimensions": 384,
+    "with_embeddings": 1520,
+    "total_tags": 47
+  },
+  "queries": {
+    "total": 4821,
+    "unique_agents": 23,
+    "total_gamma": 5234.7,
+    "avg_gamma": 1.086,
+    "rate_limited_count": 12
+  },
   "conservation": {
-    "C_per_query": 1.584962500721156,
+    "C": 1.584962500721156,
     "C_symbol": "log₂(3)",
-    "total_gamma_spent": 5234.7,
-    "total_capacity": 7641.2,
-    "global_utilization": 0.685,
-    "global_eta_remaining": 2406.5,
-    "rejected_queries": 12,
-    "avg_gamma_per_query": 1.086
+    "global_entropy_bits": 3.21,
+    "global_information_density": 1.086
+  },
+  "feedback": {
+    "total": 342,
+    "positive": 298,
+    "negative": 44
   }
 }
 ```
-
-### `POST /feedback` — Relevance Feedback
-
-Submit feedback on search results to improve future rankings.
-
-**Request:**
-
-```json
-{
-  "query_id": 107,
-  "document_id": 42,
-  "relevant": true
-}
-```
-
-**Response:**
-
-```json
-{
-  "status": "recorded",
-  "feedback": {
-    "query_id": 107,
-    "document_id": 42,
-    "relevant": true
-  },
-  "new_relevance_score": 0.2,
-  "adjustment": 0.05
-}
-```
-
-Positive feedback adds 0.05 to the document's relevance score. Negative feedback
-subtracts 0.03. Scores are clamped to [-1, 1].
 
 ### `GET /health` — Health Check
 
@@ -407,10 +353,45 @@ subtracts 0.03. Scores are clamped to [-1, 1].
 {
   "status": "healthy",
   "service": "SHOAL",
-  "conservation_bound": "log₂(3) ≈ 1.584963",
-  "timestamp": "2026-06-14T10:30:00.000Z"
+  "conservation": {
+    "C": 1.584962500721156,
+    "C_symbol": "log₂(3)",
+    "gamma_balance": 0.42,
+    "eta_balance": 0.58,
+    "agent_budgets_active": 7
+  },
+  "bindings": {
+    "D1": true,
+    "AI": true,
+    "Vectorize": true
+  },
+  "timestamp": "2026-06-14T09:52:00.000Z"
 }
 ```
+
+### `POST /feedback` — Relevance Feedback
+
+Adjust document relevance scores based on agent judgement.
+
+```json
+// Request
+{
+  "query": "how to handle errors in async rust",
+  "docId": 42,
+  "relevant": true
+}
+
+// Response
+{
+  "status": "recorded",
+  "feedback": { "query": "...", "doc_id": 42, "relevant": true },
+  "previous_score": 0.06,
+  "new_score": 0.12,
+  "adjustment": 0.06
+}
+```
+
+Positive feedback: +0.06. Negative feedback: −0.04. Scores clamped to [−1, 1].
 
 ---
 
@@ -419,114 +400,76 @@ subtracts 0.03. Scores are clamped to [-1, 1].
 ### Prerequisites
 
 - Node.js 18+
-- A Cloudflare account
+- Cloudflare account with Workers AI access
 - Wrangler CLI (`npm install -g wrangler`)
 
 ### Setup
 
 ```bash
-# Clone the repo
 git clone https://github.com/superinstance/shoal.git
 cd shoal
-
-# Install dependencies
 npm install
 
-# Create the D1 database
+# Create D1 database
 npx wrangler d1 create shoal-db
-# ^ Copy the database_id into wrangler.toml
+# Copy database_id into wrangler.toml
 
-# Initialize the schema
+# Create Vectorize index
+npx wrangler vectorize create shoal-vectors --dimensions 384 --metric cosine
+
+# Initialize schema (local)
 npx wrangler d1 execute shoal-db --local --file=./schema.sql
 
-# Start the dev server
+# Start dev server
 npx wrangler dev
 ```
 
-### First Search
+### First Query
 
 ```bash
-# Ingest some documents
+# Ingest knowledge
 curl -X POST http://localhost:8787/ingest \
   -H "Content-Type: application/json" \
   -d '{
-    "documents": [
+    "items": [
       {
-        "title": "The Ternary Revolution",
-        "content": "Ternary computing uses three states instead of two, enabling richer information density per symbol.",
-        "doc_type": "article"
+        "text": "Ternary computing uses three states instead of two, enabling richer information density per symbol.",
+        "metadata": { "topic": "ternary" },
+        "tags": ["ternary", "computing"]
       },
       {
-        "title": "Attention Is All You Need",
-        "content": "The Transformer architecture relies on self-attention mechanisms to model dependencies in sequence data.",
-        "doc_type": "paper"
+        "text": "The Transformer architecture relies on self-attention to model sequence dependencies.",
+        "metadata": { "topic": "ai" },
+        "tags": ["ai", "attention", "transformer"]
       }
     ]
   }'
 
-# Search with conservation bound
-curl -X POST http://localhost:8787/search \
+# Query with agent identity
+curl -X POST http://localhost:8787/query \
   -H "Content-Type: application/json" \
   -d '{
     "query": "ternary logic in neural networks",
+    "agentId": "test-agent",
     "topK": 3
   }'
 
 # Check stats
 curl http://localhost:8787/stats
+
+# Health check
+curl http://localhost:8787/health
 ```
 
 ### Deploy
 
 ```bash
-# Create the remote D1 database
-npx wrangler d1 create shoal-db
-
-# Update wrangler.toml with the database_id
-
 # Initialize remote schema
 npx wrangler d1 execute shoal-db --remote --file=./schema.sql
 
-# Deploy to the edge
+# Deploy
 npx wrangler deploy
 ```
-
----
-
-## The Three Trends
-
-SHOAL is the first product to combine three emerging trends in computing:
-
-### 1. Ternary Computing
-
-Classical computing is binary: 0 or 1, true or false. Ternary computing uses
-three states: -1, 0, +1 (or equivalently: false, unknown, true). This is not a
-new idea — the Setun computer (1958) was ternary — but it is newly relevant.
-Ternary neural networks (using weights in {-1, 0, +1}) achieve comparable
-accuracy to binary networks with 50% fewer parameters, because the zero weight
-("I don't know") is informationally rich. SHOAL's conservation bound of C =
-log₂(3) bits encodes this ternary insight directly into the search budget.
-
-### 2. Agent Governance
-
-The AI agent community is increasingly concerned with governance: how do we
-ensure autonomous agents don't consume unbounded resources, make unbounded
-decisions, or take unbounded actions? SHOAL demonstrates one approach: a
-conservation law. The engine *cannot* over-attend, not because of an external
-rate limiter, but because its information budget is built into the search
-algorithm itself. This is governance by physics, not policy. The same principle
-could apply to agent memory, agent communication, and agent action selection.
-
-### 3. Local-First AI
-
-The local-first software movement argues that users should own their data,
-their compute, and their algorithms. SHOAL runs on Cloudflare's edge, but its
-embeddings are generated by an open model (`bge-small-en-v1.5`), its database
-is a local SQLite file (via D1), and its conservation law is a mathematical
-identity, not a proprietary algorithm. You can fork SHOAL, run it locally with
-`wrangler dev`, and have a fully functional semantic search oracle on your
-laptop. No API keys to OpenAI. No data leaving your machine. The shoal swims in
-your waters.
 
 ---
 
@@ -534,76 +477,61 @@ your waters.
 
 ### Cosine Similarity
 
-Given query embedding **q** and document embedding **d**:
-
 ```
 sim(q, d) = (q · d) / (|q| × |d|)
 ```
 
-This gives a value in [-1, 1], where 1 = identical, 0 = orthogonal, -1 =
-opposite.
+Range [−1, 1]. 1 = semantically identical, 0 = unrelated.
 
 ### Softmax Attention
 
-Given similarities [s₁, s₂, ..., sₙ] and temperature τ:
-
 ```
-αᵢ = exp((sᵢ - max(s)) / τ) / Σⱼ exp((sⱼ - max(s)) / τ)
+αᵢ = exp((sᵢ − max(s)) / τ) / Σⱼ exp((sⱼ − max(s)) / τ)
 ```
 
-The attention weights αᵢ sum to 1.0. Lower temperatures produce sharper
-distributions (more attention on the top result); higher temperatures produce
-flatter distributions (attention spread evenly).
+Temperature τ = 0.12 produces sharp distributions. Weights sum to 1.0.
+
+### γ (Information Gain = Entropy of Attention)
+
+```
+γ = −Σ αᵢ log₂(αᵢ)
+```
+
+| Distribution | γ | Meaning |
+|-------------|------|---------|
+| [1.0] (one result) | 0 bits | Agent learned exactly one thing — minimal cost |
+| [0.5, 0.5] (two results) | 1.0 bits | Agent learned two things — moderate cost |
+| [0.33, 0.33, 0.33] (three results) | 1.585 bits | Agent learned three things — full budget spent |
+| [0.1, 0.1, ..., 0.1] (ten results) | 3.32 bits | Clamped to C — maximum cost |
 
 ### Conservation Projection
 
-If Σαᵢ > C, scale all weights:
-
-```
-αᵢ' = αᵢ × (C / Σαⱼ)
-```
-
-After projection, Σαᵢ' = C exactly. The relative ranking is preserved — the
-top result is still the top result — but absolute attention values are
-compressed.
-
-### Information-Theoretic Justification
-
-The attention weight αᵢ can be interpreted as the probability that document *i*
-is the correct answer. Under this interpretation, -log₂(αᵢ) is the surprise
-(in bits) of seeing document *i* as the answer. The expected surprise
-(entropy) of the search is:
-
-```
-H = -Σαᵢ × log₂(αᵢ)
-```
-
-The conservation bound C = log₂(3) says: the maximum expected surprise per
-query is one ternary decision. This is exactly the entropy of a uniform
-distribution over 3 outcomes: H = log₂(3) ≈ 1.585 bits.
+γ is clamped to C. If entropy exceeds C, only C bits are charged.
 
 ---
 
 ## Configuration
 
-### Environment Variables
+### `wrangler.toml` Bindings
 
-| Variable | Where | Default | Description |
-|----------|-------|---------|-------------|
-| `DB` | wrangler.toml | — | D1 database binding |
-| `AI` | wrangler.toml | — | Workers AI binding |
+| Binding | Type | Purpose |
+|---------|------|---------|
+| `DB` | D1 Database | Document storage, query log, feedback |
+| `AI` | Workers AI | Embedding generation (bge-small-en-v1.5) |
+| `VECTORS` | Vectorize Index | ANN search (384-dim, cosine metric) |
 
-### Code-Level Constants (in `src/index.ts`)
+### Code Constants (`src/index.ts`)
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `CONSERVATION_C` | log₂(3) ≈ 1.585 | The conservation bound (bits per query) |
-| `SOFTMAX_TEMPERATURE` | 0.15 | Temperature for attention softmax |
-| `RELEVANCE_BOOST` | 0.05 | Score increase for positive feedback |
-| `RELEVANCE_PENALTY` | 0.03 | Score decrease for negative feedback |
-| `DEFAULT_TOP_K` | 5 | Default number of results |
-| `MAX_TOP_K` | 20 | Maximum results per query |
-| `EMBEDDING_DIM` | 384 | Embedding vector dimension |
+| `C` | log₂(3) ≈ 1.585 | Conservation bound (bits per agent per window) |
+| `QUERY_WINDOW_MS` | 900,000 (15 min) | Agent budget reset window |
+| `TEMPERATURE` | 0.12 | Softmax temperature |
+| `FEEDBACK_POSITIVE` | +0.06 | Relevance score boost |
+| `FEEDBACK_NEGATIVE` | −0.04 | Relevance score penalty |
+| `DEFAULT_TOP_K` | 5 | Default result count |
+| `MAX_TOP_K` | 20 | Maximum result count |
+| `EMBEDDING_DIM` | 384 | Embedding vector dimensions |
 
 ---
 
@@ -612,13 +540,46 @@ distribution over 3 outcomes: H = log₂(3) ≈ 1.585 bits.
 ```
 shoal/
 ├── src/
-│   └── index.ts          # Worker entry point — all endpoints
-├── schema.sql             # D1 database schema
-├── wrangler.toml          # Cloudflare Workers config
+│   └── index.ts          # Worker — all endpoints + conservation engine
+├── schema.sql            # D1 database schema (documents, query_log, feedback)
+├── wrangler.toml         # Cloudflare Workers config (D1 + AI + Vectorize)
 ├── package.json
 ├── tsconfig.json
-└── README.md              # You are here
+└── README.md             # You are here
 ```
+
+---
+
+## Design Philosophy
+
+### 1. Conservation Over Completion
+
+Most search engines optimise for recall — return everything that might be
+relevant. SHOAL optimises for **conservation** — return only what you can
+afford to attend to. This is a different objective function, and it produces
+different behaviour. SHOAL will silently drop results that would push γ over
+budget. That's a feature, not a bug.
+
+### 2. Agents Are Autonomous, Not Unlimited
+
+Agents need shared memory, but unconstrained access to shared memory degrades
+it. The conservation bound treats agent attention as a scarce resource — which
+it is. An agent that asks one good question is more valuable than an agent that
+asks a hundred bad ones.
+
+### 3. Graceful Degradation
+
+SHOAL works with zero external dependencies (hash-based embeddings, D1 scan).
+Each binding you add (Workers AI, Vectorize) improves quality but is not
+required for the service to function. This makes SHOAL resilient to
+infrastructure failures.
+
+### 4. Governance by Physics, Not Policy
+
+The conservation bound is not a policy that can be overridden. It is a
+mathematical constraint built into the γ computation. You cannot configure C=10
+or C=0. The bound is log₂(3) because that is the information content of one
+ternary decision, and one ternary decision per window is what an agent gets.
 
 ---
 
@@ -628,20 +589,4 @@ MIT
 
 ---
 
-## Acknowledgments
-
-SHOAL stands at the intersection of many ideas:
-
-- **Ternary computing** — Nikolay Brusentsov and the Setun computer (1958)
-- **Information theory** — Claude Shannon's mathematical theory of communication (1948)
-- **Attention mechanisms** — Bahdanau et al. and Vaswani et al.
-- **Local-first software** — Ink & Switch's vision of user sovereignty
-- **Conservation laws** — Emmy Noether's theorem connecting symmetry to conservation
-- **Cloudflare Workers** — Making edge compute accessible to everyone
-
-The shoal illustration on the landing page is a JSON object. It contains its own
-documentation. It is a hermit crab carrying its home.
-
----
-
-*SHOAL: the oracle that knows its limits. And respects them.*
+*SHOAL: the oracle that knows its limits. And enforces them.*

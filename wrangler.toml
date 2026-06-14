@@ -1,11 +1,27 @@
+# SHOAL — Semantic Hybrid Oracle for Agent Learning
+# Cloudflare Workers configuration
+
 name = "shoal"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
 
+# ─── D1 Database ─────────────────────────────────────────────────────────────
+# Store document metadata, query logs, and feedback.
+# Create with: npx wrangler d1 create shoal-db
 [[d1_databases]]
 binding = "DB"
 database_name = "shoal-db"
 database_id = "placeholder-create-with-wrangler-d1-create"
 
+# ─── Vectorize Index ─────────────────────────────────────────────────────────
+# ANN search over 384-dimensional bge-small-en-v1.5 embeddings.
+# Create with: npx wrangler vectorize create shoal-vectors --dimensions 384 --metric cosine
+[[vectorize]]
+binding = "VECTORS"
+index_name = "shoal-vectors"
+
+# ─── Workers AI ──────────────────────────────────────────────────────────────
+# Embedding model: @cf/baai/bge-small-en-v1.5 (384-dim)
+# Falls back to hash-based pseudo-embeddings if unavailable.
 [ai]
 binding = "AI"

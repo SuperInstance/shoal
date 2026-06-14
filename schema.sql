@@ -1,52 +1,53 @@
--- SHOAL: Conservation-Bounded Semantic Search Oracle
--- Schema for D1 (SQLite)
+-- SHOAL: Semantic Hybrid Oracle for Agent Learning
+-- D1 (SQLite) schema for conservation-bounded semantic search.
+--
+-- Run locally:    npx wrangler d1 execute shoal-db --local --file=./schema.sql
+-- Run remotely:   npx wrangler d1 execute shoal-db --remote --file=./schema.sql
 
--- Documents store embeddings as Float32Array BLOBs.
--- Each document belongs to a source/crate and has a type for filtering.
+-- ─── Documents ──────────────────────────────────────────────────────────────
+-- Knowledge items stored with embeddings as Float32Array BLOBs.
+-- Embeddings are 384-dimensional (bge-small-en-v1.5) or hash-based fallback.
 CREATE TABLE IF NOT EXISTS documents (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  title       TEXT NOT NULL,
-  content     TEXT NOT NULL,
-  embedding   BLOB,           -- Float32Array serialized as Buffer
-  source      TEXT DEFAULT NULL,
-  crate_name  TEXT DEFAULT NULL,
-  doc_type    TEXT DEFAULT 'generic',
-  relevance_score REAL DEFAULT 0,  -- adjusted by feedback over time
-  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_documents_crate ON documents(crate_name);
-CREATE INDEX IF NOT EXISTS idx_documents_type  ON documents(doc_type);
-
--- Every query is logged with its conservation metadata.
--- gamma_used  = attention weight consumed (information gained)
--- eta_budget  = remaining uncertainty budget
--- conservation_c = the hard bound C = log2(3) ≈ 1.585
-CREATE TABLE IF NOT EXISTS queries (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  query_text      TEXT NOT NULL,
-  results_returned INTEGER NOT NULL DEFAULT 0,
-  gamma_used      REAL NOT NULL DEFAULT 0,
-  eta_budget      REAL NOT NULL DEFAULT 0,
-  conservation_c  REAL NOT NULL DEFAULT 1.584962500721156,
-  rejected        INTEGER NOT NULL DEFAULT 0,
-  timestamp       TEXT NOT NULL DEFAULT (datetime('now'))
+  text            TEXT NOT NULL,
+  metadata        TEXT NOT NULL DEFAULT '{}',   -- JSON object
+  tags            TEXT NOT NULL DEFAULT '',      -- comma-separated
+  embedding       BLOB,                          -- Float32Array (384 floats)
+  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+  query_count     INTEGER NOT NULL DEFAULT 0,    -- how many times returned
+  relevance_score REAL NOT NULL DEFAULT 0.0      -- adjusted by feedback [-1, 1]
 );
 
-CREATE INDEX IF NOT EXISTS idx_queries_ts ON queries(timestamp);
+CREATE INDEX IF NOT EXISTS idx_documents_tags ON documents(tags);
+CREATE INDEX IF NOT EXISTS idx_documents_created ON documents(created_at);
 
--- Relevance feedback adjusts future rankings.
--- When a user marks a result relevant/not-relevant, we store it
--- and bump the document's relevance_score accordingly.
+-- ─── Query Log ──────────────────────────────────────────────────────────────
+-- Every query is logged with conservation metadata for audit and analytics.
+-- gamma = mutual information gained (attention consumed) in bits
+-- eta   = remaining information budget = C - cumulative_gamma for that window
+CREATE TABLE IF NOT EXISTS query_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  query       TEXT NOT NULL,
+  agent_id    TEXT NOT NULL,
+  gamma       REAL NOT NULL DEFAULT 0,   -- bits spent on this query
+  eta         REAL NOT NULL DEFAULT 0,   -- remaining budget after this query
+  timestamp   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_query_log_agent ON query_log(agent_id);
+CREATE INDEX IF NOT EXISTS idx_query_log_ts ON query_log(timestamp);
+CREATE INDEX IF NOT EXISTS idx_query_log_agent_ts ON query_log(agent_id, timestamp);
+
+-- ─── Feedback ───────────────────────────────────────────────────────────────
+-- Relevance feedback from agents. Adjusts document relevance_score over time.
 CREATE TABLE IF NOT EXISTS feedback (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  query_id    INTEGER NOT NULL,
-  document_id INTEGER NOT NULL,
+  query       TEXT NOT NULL,
+  doc_id      INTEGER NOT NULL,
   relevant    INTEGER NOT NULL,  -- 1 = relevant, 0 = not relevant
   timestamp   TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (query_id) REFERENCES queries(id),
-  FOREIGN KEY (document_id) REFERENCES documents(id)
+  FOREIGN KEY (doc_id) REFERENCES documents(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_feedback_doc ON feedback(document_id);
-CREATE INDEX IF NOT EXISTS idx_feedback_query ON feedback(query_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_doc ON feedback(doc_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_ts ON feedback(timestamp);
