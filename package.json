@@ -1,0 +1,30 @@
+{
+  "name": "shoal",
+  "version": "0.1.0",
+  "description": "Conservation-bounded semantic search oracle — the first search engine that refuses more attention than it can afford.",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create shoal-db",
+    "db:init": "wrangler d1 execute shoal-db --file=./schema.sql",
+    "db:init:remote": "wrangler d1 execute shoal-db --remote --file=./schema.sql",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "semantic-search",
+    "conservation-bounded",
+    "ternary",
+    "cloudflare-workers",
+    "ai",
+    "local-first",
+    "attention-budget"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^3.95.0"
+  },
+  "dependencies": {}
+}
