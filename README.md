@@ -1,5 +1,9 @@
 # SHOAL — the fleet below
 
+<p align="center">
+  <img src="assets/images/gallery-shoal.jpg" width="680" alt="Inside a dim control room at night: six small ROV telemetry feeds glow on a curved console of warm amber instruments while a vast navy bathymetry chart is inked in amber contour lines — one golden storm bloom annotated by hand in the same ink.">
+</p>
+
 A single-page web game that is secretly a bathymetry mapper. Six BLOODHOUND ROVs,
 one hidden 100×100 synthetic seafloor, quests that are real work wearing the
 typography of play. Built from the fiction-as-spec:
