@@ -1,0 +1,42 @@
+You are writing ONE JavaScript file for a browser game called Shoal (a secret bathymetry mapper). Output ONLY the JavaScript code, no markdown fences, no commentary.
+
+FILE: a UMD module in this exact pattern:
+(function(root, factory){ var m = factory();
+  if (typeof module === 'object' && module.exports) { module.exports = m; }
+  else { root.SHOAL = root.SHOAL || {}; root.SHOAL.Quests = m; }
+})(typeof self !== 'undefined' ? self : this, function(){
+  /* code */
+  return api;
+});
+
+RULES: No DOM. No network. Deterministic. Pure logic, unit-testable in Node. Include mulberry32 verbatim:
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+
+CONTEXT: terrain = SHOAL.Terrain.generate(seed) with terrain.depth (Float32Array fathoms), terrain.classify(x,y), terrain.features.relics (3 deterministic spots: skiff, whalefall, metridium). gameState passed to progress functions has:
+  { measured: Uint8Array(10000), relicsFound: {skiff:false, whalefall:false, metridium:false},
+    stormsTracked: n, rightCalls: n, exceptionLogged: bool, sawyer: {bed:bool, teeth:bool} }
+
+MODULE: SHOAL.Quests — quest engine. Quests are REAL WORK wearing the typography of play; the game never lies: quest targets are computed from the actual hidden terrain, so a quest is completable only by genuinely measuring it.
+
+API (implement exactly):
+- buildQuests(terrain) -> { quests: [...ordered...], relics: [...], achievements: [...] }
+- Quest object: { id, kind, title, desc, xp, progress(gameState) -> {cur, goal, label}, }
+  progress returns 0-cur ints + goal + short label like "tiles sounded".
+- QUEST LIST in order:
+  q0: kind 'sawyer'. title "Swarm time is earned". desc "Make the bed. Brush your teeth. Then the bloodhounds are yours." Steps rendered as checkboxes: ['Make the bed','Brush teeth']. progress: cur = bed+teeth count, goal 2. DONE STRAIGHT, no joke, no wink — this is the onboarding fence.
+  q1: kind 'chart'. "Chart the shelf, 40–60 fathoms — west face". Target = terrain.tilesMatching(t => depth 40..60 && x<45). Goal = 80% of that count. cur = measured count among them.
+  q2: kind 'chart'. "Chart the basin floor". Target = tiles with classify 'basin' OR depth>=150. Goal 60%.
+  q3: kind 'chart'. "Sound the saddle". Target = tiles within radius 6 of features.saddle. Goal 90%.
+  q4: kind 'chart'. "Trace the deep current". Target = tiles within 4 of channel segments. Goal 50%.
+  q5: kind 'relic'. "Salvage log — find the wrecks". progress = relicsFound count, goal 3. desc mentions: a sunken skiff, a whale fall, a garden of metridiums.
+  q6: kind 'track'. "Track a fish storm for 20 minutes". progress = stormsTracked, goal 1. (20 minutes of boat time compresses to ~60 seconds of play; the telemetry clock handles that.)
+  q7: kind 'exception'. "Log the anomaly" (hidden until first tracked storm completes). desc: "Sometimes fish stack in the deepest basin and ignore every edge rule. Find it. Annotate it in the same ink." progress: exceptionLogged ? 1 : 0, goal 1. This is the game's rarest achievement — flag quest.rare = true.
+- relics(terrain): mark each relic with a found flag and a flavor line:
+    skiff: "A sunken skiff, paint gone to rust. The insurance company has not heard of this one."
+    whalefall: "A whale fall. The bones hold a slow city."
+    metridium: "A garden of metridiums swaying like a slowed-down crowd."
+- achievements list (strings earned during play, engine just defines them): 'First Tile', 'Mow Hand' (250 mow tiles), 'Cartographer' (3000 tiles), 'Bloodhound' (first storm tracked), 'The Deep-Current Exception' (rarest).
+- checkRelics(gameState, terrain, newlyRevealed) -> array of relic objects discovered this tick (tile within 2 of a relic spot, not already found -> set found, return them).
+- isDone(quest, gameState) -> bool (progress.cur >= goal).
+
+Keep it under ~200 lines. Clean, commented. No emoji.

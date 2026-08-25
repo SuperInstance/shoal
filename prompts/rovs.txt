@@ -1,0 +1,44 @@
+You are writing ONE JavaScript file for a browser game called Shoal (a secret bathymetry mapper). Output ONLY the JavaScript code, no markdown fences, no commentary.
+
+FILE: a UMD module in this exact pattern:
+(function(root, factory){ var m = factory();
+  if (typeof module === 'object' && module.exports) { module.exports = m; }
+  else { root.SHOAL = root.SHOAL || {}; root.SHOAL.Rovs = m; }
+})(typeof self !== 'undefined' ? self : this, function(){
+  /* code */
+  return api;
+});
+
+RULES: No DOM. No network. Deterministic. Pure logic, unit-testable in Node.
+
+MODULE: SHOAL.Rovs — the BLOODHOUND swarm. Six ROVs the player steers in formation over a hidden 100x100 seafloor. Each ROV tows a sounder: tiles within SONAR_R = 1.6 tiles of a live ROV get measured (revealed as true bottom).
+
+API (implement exactly):
+- createSwarm(opts) -> swarm, where opts = {x:50, y:50}. Swarm state:
+  {
+    rovs: [ {id, x, y, alive:true, fouledUntil:0, hull:100}, ... 6 of them, ids 'H1'..'H6' ],
+    anchor: {x, y},      // formation center, floats
+    heading: 0,          // radians, movement direction
+    speed: 0,            // current tiles/sec
+    mode: 'free',        // 'free' | 'mow'
+    formation: 'line',   // 'line' | 'wedge' | 'ladder'
+    mow: { dir: 1, spacing: 8, rowStep: 0, yRow: 50, minX: 2, maxX: 97, paused: false },
+    stats: { tiles: 0, mowTiles: 0, sweeps: 0, fouls: 0, lost: 0 }
+  }
+- formations(spacing) -> map of offset arrays for 6 ROVs:
+    'line': abreast along x: offsets [-2.5,-1.5,-0.5,0.5,1.5,2.5] * spacing (i.e. y offset 0)
+    'wedge': V pointing +x: rov i at (i - 2.5)*spacing on x? NO — wedge: point leader at (+1.5*spacing, 0), trailing pairs behind: (-0.5s,-1s),( -0.5s,+1s), (-1.5s,-2s), (-1.5s,+2s), (-2.5s, 0)
+    'ladder': 2 columns x 3 rows: (-1s,-1s),(-1s,0),(-1s,1s),(0,-1s),(0,0),(0,1s)
+- update(swarm, dt, input, terrain, measured, timeSec) -> { revealed: [{x,y}], events: [{type, ...}] }
+  - input = {ax: -1..1, ay: -1..1, toggleMow: bool, setFormation: 'line'|'wedge'|'ladder'|null, mowSpacingDelta: 0}
+  - FREE MODE: anchor moves at 9 tiles/sec along input axes (normalized if diagonal), clamped to [1.5, 98.5]. heading = atan2 of movement when moving. speed = current |velocity|.
+  - MOW MODE (autopilot serpentine, "mowing"): formation forced to 'line' with spacing = mow.spacing/2 (so a row pass covers ~ (5 * spacing/2 + 3) tiles wide). Anchor sweeps horizontally at 6.5 tiles/sec from one side to the other (mow.dir flips at minX/maxX bounds -> emit event {type:'sweepEnd', dir}); each time direction flips, yRow += rowStep where rowStep = 2.5*mow.spacing + 2.5, emit {type:'sweepEnd'}. mowSpacingDelta adjusts mow.spacing within [4,14]. Anchor y follows yRow smoothly. When toggled on, initialize yRow = anchor.y, dir = sign chosen toward the farther x side.
+  - REVEAL: for each alive, non-fouled ROV (fouled = timeSec < fouledUntil), mark all integer tiles with center distance <= SONAR_R. measured is a Uint8Array(100*100); if measured[i] was 0, set to 1, push {x,y} to revealed, stats.tiles++; if mode==='mow', stats.mowTiles++ too.
+  - SNAG (the game never lies): a live ROV moving through a pinnacle tile (terrain.classify === 'pinnacle', i.e. the hazard the charts missed) at swarm.speed > 4.5 gets fouled: fouledUntil = timeSec + 12, hull -= 34, emit {type:'snag', rov:id, x, y, depth}. If hull <= 0: alive=false, stats.lost++, emit {type:'lost', rov:id, x, y} — shown plainly, no spin. Add rng-based mercy: only check snag with probability 0.5 per second per ROV on pinnacle (use a module-level mulberry32 seeded from a constant so it stays deterministic in tests): probability = 0.5*dt per offending rov.
+  - Fouled ROVs trail at anchor position (they get towed), do not reveal.
+- helper: aliveCount(swarm), coveragePct(measured) -> percent of 10000 tiles.
+
+Include mulberry32 verbatim for the snag rng:
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+
+Keep it under ~220 lines. Clean, commented.

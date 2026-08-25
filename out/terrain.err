@@ -1,0 +1,161 @@
+kimi version 0.38.0
+• The user wants a single JavaScript file, output only code. Working directory has prompts/terrain.txt presumably this same prompt. I should just write the code. Output ONLY the JavaScript code — but as an agent, I should write it to a file? The prompt says "You are writing ONE JavaScript file". Given the environment (test/ dir, out/ dir), likely they want the file written somewhere. But instruction says output only code, no commentary. Safest: write the file to js/ directory probably. Let me check the structure quickly? There's js/ dir. But output-only instruction suggests just printing code. As a CLI agent, best to write the file and show minimal. But "Output ONLY the JavaScript code, no markdown fences, no commentary" — likely this prompt is part of a batch harness. I'll write the file to a sensible location and keep my reply minimal. Actually the instructions say output only code — I'll just output the code directly without tools? But better to also save it. Hmm.
+
+  Given ambiguity, I'll write the file to js/terrain.js and reply with just the code. Actually minimal reply: I could just output the code. But the harness here likely evaluates via writing file. There's out/terrain.raw which suggests raw outputs get captured. The prompts/terrain.txt is the prompt. Probably the harness saves my reply to out/terrain.raw. So just output the code as text, no tools needed. But tests exist in test/? Might run node tests against SHOAL.Terrain. The reply itself is captured. I'll just output code.
+
+  Let me design carefully.
+
+  Requirements:
+  - mulberry32 verbatim.
+  - makeNoise(seed) -> reusable 2D value-noise function. I'll make it return function(x,y,scale,seedOffset) or maybe (x,y)? Spec: "write your own valueNoise(x,y,scale,seedOffset)" and "export helper makeNoise(seed) returning a reusable 2D value-noise function". So makeNoise(seed) returns valueNoise(x,y,scale,seedOffset) presumably with hashing seeded by seed.
+
+  Implementation:
+
+  function makeNoise(seed){
+    function hash(ix,iy,off){
+      var h = ix*374761393 + iy*668265263 + seed*1013904223 + off*2246822519;
+      h = Math.imul(h ^ h>>>13, 1274126177);
+      h = h ^ h>>>16;
+      return (h>>>0)/4294967296;
+    }
+    function smooth(t){return t*t*(3-2*t);}
+    return function(x,y,scale,off){
+      var gx = x/scale, gy = y/scale;
+      var x0 = Math.floor(gx), y0 = Math.floor(gy);
+      var fx = smooth(gx-x0), fy = smooth(gy-y0);
+      var v00=hash(x0,y0,off), v10=hash(x0+1,y0,off), v01=hash(x0,y0+1,off), v11=hash(x0+1,y0+1,off);
+      var a = v00+(v10-v00)*fx;
+      var b = v01+(v11-v01)*fx;
+      return (a+(b-a)*fy)*2-1; // -1..1
+    };
+  }
+
+  generate(seed):
+  - rng = mulberry32(seed)
+  - W=H=100
+  - features chosen:
+    basin: cx = 62+rng()*26, cy=55+rng()*30, r ~ 14? "distance to basin center < basin.r" classify — set r = 14 (sigma). Or r slightly larger, say 16.
+    deepest computed after.
+    pinnacle: px = 35+rng()*20, py = 25+rng()*35, r=3.5
+    high2: hx=20+rng()*18, hy=55+rng()*25
+    channel: xstart=70+rng()*15 at y=0, walk steps of 6: y=0,6,...,96 plus maybe 99. Steps: y from 0 to 99 step 6 → 17 waypoints (>=12 ✓). x meanders: x += (rng()*2-1)*8, clamp 62..92.
+
+  Order of rng calls matters for determinism but any fixed order is fine.
+
+  Depth build:
+  for each tile:
+    t = x/99; base = 30 + 90*smoothstep(t) where smoothstep(t)=t*t*(3-2t)
+    tilt: +10*(y/99)
+    shelf: x<38 → -12, but maybe smooth edge? Spec says "broad plateau lifting the west third (x<38) by -12 fm, with value-noise texture". Simple: if x<38 depth -= 12. Maybe smooth falloff near edge to avoid cliff — keep simple but could use smoothstep on (38-x)/6 for tiles 32..38. I'll do smooth edge: shelf lift = -12 * smoothstep(clamp((38-x)/6,0,1))... that gives full -12 at x<=32, fading to 0 at 38. That's fine and better-looking.
+    basin: +85 * exp(-(d2)/(2*14*14))
+    pinnacle: -70 * exp(-d2/(2*2.2^2))
+    high2: -35 * exp(-d2/(2*5^2))
+    channel: distance to nearest segment < 3.5 → +24*falloff. falloff = smooth(1 - dist/3.5)? Use (1 - dist/3.5) smoothstepped.
+    noise: 3 octaves: n = valueNoise(x,y,18,0)*0.5 + valueNoise(x,y,8,1)*0.3 + valueNoise(x,y,3.5,2)*0.2 → -1..1ish, times 7.
+    clamp [6,235].
+
+  Channel distance: point-to-segment distance to each segment of channel polyline.
+
+  Pinnacle peak must be <=16 fm: peak location depth = base at that point + tilt + shelf maybe (pinnacle x in 35..55, so x>=35 may get partial shelf) - 70 + noise. At x=35: base = 30+90*ss(35/99). ss(0.3535)= 0.3535²(3-0.707)=0.125*2.293=0.2866 → 30+25.8=55.8. tilt up to +10*0.6=6 (y up to 60). shelf at x=35: (38-35)/6=0.5, ss(0.5)=0.5 → -6. So 55.8+6-6-70 = -14 → clamped to 6. Always <=16 because -70 dominates. Guaranteed by clamp to 6 actually — min 6. ✓ But "peak must be <= 16 fm" — with clamp at 6, min is 6. Fine.
+
+  Deepest >= 165: basin center: base at x=62..88: ss(62/99=0.626)=0.392*2.121... let me compute: t=0.626, t²=0.392, (3-2t)=1.748, product=0.685 → 30+61.6=91.6. At x=88: t=0.889, t²=0.790, 3-2t=1.222, =0.965 → 30+86.9=116.9. tilt +~7. basin +85 → 91.6+7+85=183.6 min. ✓ >=165 guaranteed (noise ±7 → 176.6 worst). ✓
+
+  deepest: scan for max depth → {x,y,d}.
+
+  saddle: sample straight line between pinnacle center and high2 center; saddle = point of maximum depth along that line. Note: "the dip between two highs" — max depth along line. Sample ~ 50 points, take tile with max depth. Store rounded {x,y}.
+
+  Wait spec says "shallowest point on the ridge line... no wait... point of maximum depth along that line". OK max depth.
+
+  relics: exactly 3, deterministic from rng, not on pinnacle:
+  - skiff on shelf edge: find tiles where classify... simpler: pick from tiles where depth in [50,60] and x in [30,50]? "on the shelf edge". Collect candidates: depth between 48 and 62 and x between 25 and 50. Choose rng index.
+  - whalefall in the basin: candidates depth >= 150 (or within basin r). Choose rng.
+  - metridium near pinnacle: distance to pinnacle between r and r+6 maybe, depth < 40, not on pinnacle itself.
+
+  Ensure fallback if candidate list empty (shouldn't be, but keep safe): fallback to feature-adjacent point. Keep simple — candidates will exist. But to be safe add fallback arrays of all tiles? A simple fallback: if none, use offset from the anchor. I'll add minimal fallbacks.
+
+  Also ensure relics not on pinnacle: metridium distance >= pinnacle.r; skiff/whalefall far away anyway.
+
+  classify(x,y): order:
+  1. pinnacle: dist < r && depth < 30
+  2. saddle: dist to saddle <= 2.5 ("within 2.5 tiles")
+  3. basin: depth >= 145 || dist < basin.r
+  4. channel: within 3.5 of channel
+  5. shelf: depth<60 && x<50
+  6. slope: depth in [40,100]
+  7. deep
+
+  Note classify uses channel distance — precompute nothing; compute distance per call is fine.
+
+  idx(x,y) = y*W+x. depthAt = depth[idx] with rounding? Keep plain: assume integer coords; use x|0. Maybe clamp to bounds. I'll floor and clamp.
+
+  gradient(x,y): finite difference clamped: gx = depthAt(min(x+1,W-1),y) - depthAt(max(x-1,0),y) over 2 or 1? "fathoms per tile, finite difference, clamped to bounds" — central difference where possible, one-sided at edges. Simple: gx = (depthAt(x+1,y)-depthAt(x-1,y))/(x2-x1) with clamped coords.
+
+  tilesMatching(fn): iterate all tiles, fn(x,y,depth?) — spec says fn, used for quest targets. Call fn(x,y,depth[idx]) and collect {x,y} if truthy. I'll pass (x,y,depth).
+
+  Line count ~200. Fine.
+
+  Distance point to segment helper.
+
+  Now write file. Should I write to js/terrain.js? The js/ dir exists. I'll write it there with a Write tool, then output the code as my reply. The instruction "Output ONLY the JavaScript code" — I'll write the file and keep the reply as the code only. Actually the harness probably captures my final message into out/terrain.raw. Writing the file too is harmless and useful. But tests in test/ may require it at a specific path. Let me quickly check js/ and test/ contents — cheap glob. Yes, do that first.css:
+
+js:
+
+test:
+Empty dirs. I'll write js/terrain.js and verify with node quickly, then output code only.1 deepest 211.8 peak 6.6 chan 17 relics skiff@36,47 whalefall@78,66 metridium@37,60 saddle 41,61 {"shelf":3930,"slope":2021,"deep":2161,"channel":481,"basin":1371,"pinnacle":17,"saddle":19}
+42 deepest 226.2 peak 21.2 chan 17 relics skiff@36,27 whalefall@79,52 metridium@58,48 saddle 47,52 {"shelf":3722,"slope":2200,"deep":2181,"channel":390,"basin":1481,"pinnacle":5,"saddle":21}
+1337 deepest 206.5 peak 44.3 chan 17 relics skiff@36,40 whalefall@66,69 metridium@57,48 saddle 47,51 {"shelf":3659,"slope":1965,"deep":2770,"channel":422,"basin":1163,"saddle":21}
+99999 deepest 229.4 peak 7.6 chan 17 relics skiff@36,40 whalefall@94,62 metridium@53,49 saddle 41,50 {"shelf":3719,"slope":2524,"deep":2055,"channel":360,"basin":1311,"pinnacle":10,"saddle":21}
+gradient ok true true
+noise 0.0608
+Issue: seed 1337 peak is 44.3 — violates "peak must be <= 16 fm". Why? Pinnacle at x in 35..55, y in 25..60. If x is near 55, base is higher: ss(55/99)=t=0.5556, t²=0.3086, 3-2t=1.889 → 0.583 → 30+52.5=82.5 + tilt up to 6 = 88.5 - 70 = 18.5 + noise up to 7 → 25.5... but 44? Also channel could add +24 if pinnacle near channel? Channel x clamp 62..92, pinnacle max x 55, distance >= 7 > 3.5. No. high2? high2 x 20..38, y 55..80 — pinnacle y 25..60; if pinnacle y near 60 and high2 y near 55, x near 35-38 — bumps could overlap: -35 more (decreases depth). That reduces. Hmm, what raises depth at peak? Noise +7, and... wait metridium at 57,48 for seed 1337. Peak 44.3 means pinnacle barely reduced. Pinnacle sigma 2.2, amplitude -70 at center → at center exactly -70. depthAt rounds coords. Let me check: maybe pinnacle x,y — seed 1337 peak 44.3. Base at x=55: 82.5. Hmm 82.5 + tilt + noise -70 → ~20-26 max. 44? Unless basin influence: basin cx 62..88, cy 55..85; distance from pinnacle (55,60) to basin (62,55): ~8.6 tiles → 85*exp(-74/392)=85*0.828=70! Yes — basin gaussian tail can add a lot if basin center is near pinnacle's SE corner. So peak can exceed 16.
+
+  Fix options: adjust depth after build to guarantee peak <= 16 — e.g., enforce by reducing amplitude or by directly clamping near pinnacle: for tiles within pinnacle.r, d = min(d, 16)? That's a hack but simple and guarantees the invariant. But it could create a weird flat spot if basin pushes it. Alternatively choose pinnacle position so it's far from basin center, or apply basin before pinnacle and then re-clamp. Simplest deterministic guarantee: when applying pinnacle bump, also cap: after computing total d, if dist to pinnacle < pinnacle.r, d = Math.min(d, 16 + small noise?). Spec says clamp final depths to [6,235] and peak must be <=16. A clean approach: compute d, then within pinnacle radius blend toward the pinnacle's own profile: d = min(d, pinnacleProfile)? Simpler: if dist < r, d = Math.min(d, 16). I'll add that as part of the pinnacle step comment — "peak guarantee: cap within the hazard radius". Actually a slightly nicer: apply min only with the pinnacle bump's own neighborhood. Fine, do min(d,16) within r of pinnacle.
+
+  Also 'pinnacle' classification requires depth<30 which is satisfied.
+
+  Wait — but saddle: between pinnacle and high2, saddle for seed 1337 at 47,51 — ok.
+
+  Also peak for seed 42: 21.2 — also >16! Fix needed. Let me implement the cap.
+
+FAIL 7 208.7 17.7 false true
+FAIL 12 189.3 16.6 false true
+FAIL 23 185.1 18.9 false true
+FAIL 28 219.3 18.3 false true
+FAIL 42 226.2 17.1 false true
+FAIL 69 226.1 17.8 false true
+FAIL 73 206.1 17.1 false true
+FAIL 74 193.1 17.8 false true
+FAIL 75 194.0 18.9 false true
+FAIL 86 212.5 16.5 false true
+FAIL 93 200.8 17.7 false true
+FAIL 94 206.1 16.9 false true
+FAIL 97 220.3 17.2 false true
+FAIL 100 203.7 18.7 false true
+FAIL 105 192.2 18.8 false true
+FAIL 108 199.9 19.0 false true
+FAIL 110 188.9 16.3 false true
+FAIL 114 209.9 17.9 false true
+FAIL 117 211.2 16.5 false true
+FAIL 121 209.8 16.6 false true
+FAIL 127 197.6 17.3 false true
+FAIL 128 221.3 17.6 false true
+FAIL 138 211.8 19.6 false true
+FAIL 139 213.0 18.2 false true
+FAIL 150 205.1 19.3 false true
+FAIL 156 200.7 18.5 false true
+FAIL 158 199.9 19.5 false true
+FAIL 161 195.2 19.1 false true
+FAIL 172 207.6 18.7 false true
+FAIL 192 206.6 18.7 false true
+FAIL 194 205.0 16.8 false true
+31 failures
+tilesMatching true
+• Still failing because cap applies within radius r=3.5, but depthAt(pinnacle.x, pinnacle.y) rounds to a tile possibly outside the strict < r check? No — rounding moves at most 0.71 tiles, still within r. The issue: cap `if (px*px+py*py < r*r && d > 16) d = 16` — d at center tile should be capped to 16. But peak reported 17.7. Because noise is applied AFTER the cap (step 8 adds noise). Move cap after noise, or better: apply cap at the very end before clamp. Let me move it to just before the clamp line.
+
+all 500 seeds pass
+deterministic: true
+classify sample: pinnacle saddle basin
+wc: 194 lines
+• All invariants hold across 500 seeds. Now output ONLY the JavaScript code per the instructions. The final reply should be just the code, no fences, no commentary. I'll paste the file content.
+
+To resume this session: kimi -r session_e6e3429a-307d-4eaa-841f-451db1f344f1

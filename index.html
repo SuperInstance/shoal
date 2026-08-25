@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SHOAL — the fleet below</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- Sawyer fence: quest 0, done straight -->
+<div id="onboard" class="onboard">
+  <div class="card">
+    <h1>SHOAL</h1>
+    <p class="sub">a survey game for the wheelhouse</p>
+    <div class="fence">
+      <p class="fenceline">Swarm time is earned.</p>
+      <label><input type="checkbox" id="chk-bed"><span>Make the bed</span></label>
+      <label><input type="checkbox" id="chk-teeth"><span>Brush teeth</span></label>
+      <button id="btn-unlock" disabled>Take the bloodhounds out</button>
+    </div>
+    <p class="quiet">Six ROVs. One hidden bottom. The map you make is the map that gets fished.</p>
+  </div>
+</div>
+
+<header>
+  <span class="brand">SHOAL</span>
+  <span id="rank" class="rank">Greenhorn</span>
+  <span class="spacer"></span>
+  <span id="clock" class="clock">00:00</span>
+  <button id="btn-mode" class="hbtn">MOW: off</button>
+  <button id="btn-watch" class="hbtn">WATCH</button>
+</header>
+
+<main>
+  <div id="mapwrap">
+    <canvas id="map" width="800" height="800"></canvas>
+    <div id="toasts"></div>
+    <div id="annotate" class="annotate hidden">
+      <input id="anno-text" maxlength="48" placeholder="annotation — same ink as the contours">
+      <span class="hint">Enter to log · Esc to cancel</span>
+    </div>
+  </div>
+
+  <aside>
+    <section class="panel" id="panel-score">
+      <h2>Record board</h2>
+      <div class="scoregrid">
+        <div><b id="s-tiles">0</b><span>tiles sounded</span></div>
+        <div><b id="s-mow">0</b><span>mow tiles</span></div>
+        <div><b id="s-storms">0</b><span>storms tracked</span></div>
+        <div><b id="s-calls">0</b><span>right-spot calls</span></div>
+        <div><b id="s-score">0</b><span>score</span></div>
+        <div><b id="s-xp">0</b><span>XP</span></div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-telemetry">
+      <h2>Telemetry</h2>
+      <div class="telrow"><span id="tel-state">no storm selected</span><span id="tel-clock">20:00</span></div>
+      <div class="telbar"><div id="tel-fill"></div></div>
+      <div class="quiet">20 minutes of boat time. Click a storm to put the telemetry on it. Keep the cursor in the cloud.</div>
+    </section>
+
+    <section class="panel grow" id="panel-quests">
+      <h2>Quest log</h2>
+      <ul id="quests"></ul>
+    </section>
+
+    <section class="panel" id="panel-log">
+      <h2>Log</h2>
+      <ul id="log"></ul>
+    </section>
+
+    <section class="panel">
+      <h2>The chart</h2>
+      <div class="btnrow">
+        <button id="btn-png">Export PNG</button>
+        <button id="btn-json">Export JSON</button>
+      </div>
+      <div class="keys">
+        WASD steer · M mow · 1/2/3 formation · [ ] spacing<br>
+        click storm = telemetry · C right-spot call · E annotate<br>
+        N night watch · Space pause
+      </div>
+    </section>
+  </aside>
+</main>
+
+<!-- Night passage: six camera feeds. No quests. No score. -->
+<div id="watch" class="watch hidden">
+  <div id="feeds"></div>
+  <div class="watchfoot">watching · N to return</div>
+</div>
+
+<script src="js/terrain.js"></script>
+<script src="js/rovs.js"></script>
+<script src="js/quests.js"></script>
+<script src="js/storms.js"></script>
+<script src="js/render.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

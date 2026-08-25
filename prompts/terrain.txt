@@ -1,0 +1,60 @@
+You are writing ONE JavaScript file for a browser game called Shoal (a secret bathymetry mapper). Output ONLY the JavaScript code, no markdown fences, no commentary.
+
+FILE: a UMD module in this exact pattern:
+(function(root, factory){ var m = factory();
+  if (typeof module === 'object' && module.exports) { module.exports = m; }
+  else { root.SHOAL = root.SHOAL || {}; root.SHOAL.Terrain = m; }
+})(typeof self !== 'undefined' ? self : this, function(){
+  /* code here */
+  return api;
+});
+
+RULES: No DOM. No network. Deterministic given the same seed. Pure logic so it can be unit-tested in Node. Use this seeded PRNG (include it verbatim):
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+
+MODULE: SHOAL.Terrain — synthetic seafloor generator.
+
+API (implement exactly):
+- generate(seed) -> terrain object:
+  {
+    W: 100, H: 100,
+    seed: seed,
+    depth: Float32Array(100*100),  // fathoms, index = y*100+x
+    features: {
+      basin:   {cx, cy, r},        // deepest basin, SE quadrant
+      deepest: {x, y, d},          // single deepest tile
+      pinnacle:{x, y, r},          // sharp shallow hazard, mid-map
+      high2:   {x, y},             // second shallow high (pairs with pinnacle to form a saddle)
+      saddle:  {x, y},             // the pass between pinnacle and high2 (or pinnacle and shelf)
+      channel: [{x,y}, ...],       // >= 12 waypoints, meandering deep-current channel, north to south, east half of map
+      relics:  [{x,y,type}, ...]   // exactly 3: {type:'skiff'} on the shelf edge, {type:'whalefall'} in the basin, {type:'metridium'} near the pinnacle; deterministic from rng, NOT on the pinnacle itself
+    }
+  }
+- terrain.idx(x,y) -> index
+- terrain.depthAt(x,y) -> fathoms
+- terrain.classify(x,y) -> one of: 'pinnacle' | 'shelf' | 'slope' | 'saddle' | 'channel' | 'basin' | 'deep'
+- terrain.tilesMatching(fn) -> array of {x,y} (used for quest targets)
+- terrain.gradient(x,y) -> {gx, gy} (fathoms per tile, finite difference, clamped to bounds)
+
+TERRAIN RECIPE (a real Alaska-style bank, west shallow -> east deep):
+1. Base plane: depth rises smoothly from ~30 fm at x=0 to ~120 fm at x=99 (smoothstep), plus gentle N->S tilt of +10 fm.
+2. Shelf: broad plateau lifting the west third (x < 38) by -12 fm, with value-noise texture so the 40-60 fm band forms a real west face.
+3. Basin: gaussian depression, center in SE quadrant chosen by rng (cx in 62..88, cy in 55..85), amplitude +85 fm, sigma ~14 tiles. Deepest tile should land >= 165 fm.
+4. Pinnacle: sharp gaussian BUMP (depth decreases) at rng point with x in 35..55, y in 25..60, amplitude -70 fm, sigma ~2.2 tiles. Its peak must be <= 16 fm. Clamp final depths to [6, 235].
+5. high2: second smaller bump, amplitude -35 fm, sigma ~5, placed rng in x 20..38, y 55..80.
+6. Saddle: after building, find the local minimum-depth... no wait, saddle = the shallowest point on the ridge line BETWEEN pinnacle and high2: sample the straight line between them, saddle = point of maximum depth along that line (the dip between two highs). Store it.
+7. Channel: pick xstart in 70..85 at y=0, then walk south y=0..99 in steps of 6, x meanders by rng walk (clamp 62..92), waypoint per step. Along the channel (distance to nearest segment < 3.5 tiles), deepen by +24 fm * falloff.
+8. Value noise: 3 octaves of smooth interpolated noise (write your own valueNoise(x,y,scale,seedOffset) with bilinear+smoothstep interpolation of hashed lattice values), total amplitude ~+/-7 fm, applied everywhere for texture.
+
+classify rules (evaluate in order):
+- 'pinnacle': distance to pinnacle center < pinnacle.r (r ~ 3.5) AND depth < 30
+- 'saddle': within 2.5 tiles of features.saddle
+- 'basin': depth >= 145 OR distance to basin center < basin.r
+- 'channel': within 3.5 of any channel segment (and not basin)
+- 'shelf': depth < 60 AND x < 50
+- 'slope': depth in [40, 100] and not the above (the west/south faces)
+- 'deep': everything else
+
+Also export a helper: makeNoise(seed) returning a reusable 2D value-noise function (the storms module will want consistent noise).
+
+Keep it under ~260 lines. Clean, commented, no dead code.

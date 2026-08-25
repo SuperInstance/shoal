@@ -1,0 +1,249 @@
+(function(root, factory){ var m = factory();
+    if (typeof module === 'object' && module.exports) { module.exports = m; }
+    else { root.SHOAL = root.SHOAL || {}; root.SHOAL.Storms = m; }
+  })(typeof self !== 'undefined' ? self : this, function(){
+    'use strict';
+
+    function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+
+    var MINX = 3, MAXX = 97, MINY = 3, MAXY = 97;
+
+    function clamp(v, lo, hi){ return v < lo ? lo : (v > hi ? hi : v); }
+    function dist(ax, ay, bx, by){ var dx = ax - bx, dy = ay - by; return Math.sqrt(dx*dx + dy*dy); }
+
+    function createStormSystem(seed, terrain){
+      return {
+        storms: [],
+        nextSpawnAt: 8,
+        exceptionAt: 105,
+        exceptionDone: false,
+        exceptionRetryAt: 0,      // one retry if the chosen storm rains out early
+        exceptionRetries: 0,
+        exceptionStormId: null,
+        time: 0,
+        totalSpawned: 0,
+        terrain: terrain,
+        rng: mulberry32(seed | 0)
+      };
+    }
+
+    function pickMode(rng){
+      var w = rng();
+      if (w < 0.45) return 'feeding';
+      if (w < 0.75) return 'pursued';
+      return 'drifting';
+    }
+
+    function spawnStorm(sys, mode){
+      var rng = sys.rng;
+      var s = {
+        id: ++sys.totalSpawned,
+        cx: 15 + rng() * 70,             // x 15..85
+        cy: 10 + rng() * 80,             // y 10..90
+        vx: 0, vy: 0,
+        r: 4 + rng() * 4,                // 4..8 tiles
+        tightness: rng(),
+        mode: mode || pickMode(rng),
+        age: 0,
+        life: 90 + rng() * 60,           // 90..150 s then rains out
+        biomass: 40 + rng() * 60,        // 40..100 arb units
+        seed: rng() * 1000,              // per-storm noise phase
+        heading: rng() * Math.PI * 2,    // current heading (pursued/drifting)
+        retargetAt: 0,                   // next erratic heading change
+        predicted: null
+      };
+      sys.storms.push(s);
+      return s;
+    }
+
+    // Steer helper: returns desired velocity {x,y} for a storm.
+    function desiredVelocity(sys, s){
+      var t = sys.terrain, g = t.gradient(s.cx, s.cy);
+      var gl = Math.sqrt(g.gx*g.gx + g.gy*g.gy);
+      var nx = gl > 1e-6 ? g.gx/gl : 0, ny = gl > 1e-6 ? g.gy/gl : 0; // unit gradient (toward deeper)
+      var i, speed;
+
+      switch (s.mode){
+        case 'feeding': {
+          // Edge-following: sink along -gradient (toward deeper water / shelf drop)
+          // plus a tangential component so it orbits contour edges. Jittered.
+          speed = 1.5 + sys.rng() * 1.0;
+          var tx = -ny, ty = nx;                       // tangent along the contour
+          if (sys.rng() < 0.5){ tx = -tx; ty = -ty; }  // orbit direction per step
+          var j = (sys.rng() - 0.5) * 0.6;             // per-storm noise jitter
+          return { x: (-nx + tx) * 0.707 * speed + j, y: (-ny + ty) * 0.707 * speed + j };
+        }
+        case 'pursued': {
+          // Uphill = toward shallower = smaller depth = along -gradient... careful:
+          // gradient points toward deeper, so uphill is -gradient. Erratic heading
+          // changes every 2–4s, but the new heading must keep a shallower component.
+          if (s.age >= s.retargetAt){
+            s.retargetAt = s.age + 2 + sys.rng() * 2;
+            var base = Math.atan2(-ny, -nx);           // uphill direction
+            s.heading = base + (sys.rng() - 0.5) * 1.6; // erratic, still climbing
+          }
+          speed = 2.5 + sys.rng() * 1.0;
+          return { x: Math.cos(s.heading) * speed, y: Math.sin(s.heading) * speed };
+        }
+        case 'column': {
+          // The exception: lean downhill — local gradient blended with the bearing
+          // to the deep basin. The current carries the column to the floor; noise
+          // in the local field must not pin it against the map edge.
+          var dep = sys.terrain.features.deepest;
+          var bx = dep.x - s.cx, by = dep.y - s.cy;
+          var bl = Math.sqrt(bx * bx + by * by) || 1;
+          bx /= bl; by /= bl;
+          return { x: (nx * 0.5 + bx * 1.5), y: (ny * 0.5 + by * 1.5) };
+        }
+        case 'stacked':
+          return { x: 0, y: 0 };
+        default: { // 'drifting': slow sine meander
+          speed = 0.5 + sys.rng() * 0.5;
+          s.heading += Math.sin((s.age + s.seed) * 0.35) * 0.06;
+          return { x: Math.cos(s.heading) * speed, y: Math.sin(s.heading) * speed };
+        }
+      }
+    }
+
+    // Avoid the deepest basin: push storms away unless it's the exception storm.
+    function avoidDeep(sys, s){
+      if (s.mode === 'column' || s.mode === 'stacked') return;
+      var d = sys.terrain.features.deepest;
+      var dd = dist(s.cx, s.cy, d.x, d.y);
+      if (dd < 10){
+        var px = (s.cx - d.x) / (dd || 1), py = (s.cy - d.y) / (dd || 1);
+        s.vx += px * (10 - dd) * 0.25;
+        s.vy += py * (10 - dd) * 0.25;
+      }
+    }
+
+    function beginException(sys, events){
+      var s = null, i;
+      for (i = 0; i < sys.storms.length; i++){        // youngest storm: most life left
+        if (!s || sys.storms[i].age < s.age) s = sys.storms[i];
+      }
+      if (!s) s = spawnStorm(sys, 'column');          // none alive: spawn one
+      s.mode = 'column';
+      s.life = s.age + 100;  // the descent gets its time — the exception must be witnessable
+      sys.exceptionStormId = s.id;
+      events.push({ type: 'exceptionBegin', id: s.id });
+    }
+
+    function update(sys, dt){
+      var events = [], i, s;
+      sys.time += dt;
+
+      // Spawn schedule: first at 8s, then every 22–40s, max 3 concurrent.
+      if (sys.time >= sys.nextSpawnAt && sys.storms.length < 3){
+        spawnStorm(sys);
+        sys.nextSpawnAt = sys.time + 22 + sys.rng() * 18;
+      }
+
+      // The deep-current exception: once per session, one retry allowed.
+      if (!sys.exceptionDone){
+        if (sys.time >= sys.exceptionAt && !sys.exceptionStormId && sys.exceptionRetries === 0){
+          beginException(sys, events);
+        } else if (sys.exceptionRetries === 1 && sys.time >= sys.exceptionRetryAt && !sys.exceptionStormId){
+          beginException(sys, events);
+        } else if (sys.exceptionRetries > 1 && !sys.exceptionStormId){
+          sys.exceptionDone = true;
+          events.push({ type: 'exceptionMissed' });
+        }
+      }
+
+      for (i = sys.storms.length - 1; i >= 0; i--){
+        s = sys.storms[i];
+        s.age += dt;
+
+        // Rained out.
+        if (s.age >= s.life){
+          if (s.id === sys.exceptionStormId && !sys.exceptionDone){
+            sys.exceptionStormId = null;
+            sys.exceptionRetries++;
+            sys.exceptionRetryAt = sys.exceptionAt + 60; // retry once, then give up
+          }
+          sys.storms.splice(i, 1);
+          events.push({ type: 'rainedOut', id: s.id });
+          continue;
+        }
+
+        // Behavior: radius relaxes toward its mode's signature shape.
+        var targetR = s.mode === 'feeding' ? 2.5
+                    : s.mode === 'pursued' ? 9.0
+                    : s.mode === 'column' ? 1.8
+                    : s.mode === 'stacked' ? 1.6
+                    : 6.0 + Math.sin(s.seed) * 2.0;   // drifting: loose, ~6–8
+        s.r += (targetR - s.r) * Math.min(1, dt * 0.5);
+        s.tightness = clamp(1 - (s.r - 1.6) / (9 - 1.6), 0, 1);
+
+        var dv = desiredVelocity(sys, s);
+        // Smoothly steer current velocity toward desired.
+        var k = Math.min(1, dt * 1.5);
+        s.vx += (dv.x - s.vx) * k;
+        s.vy += (dv.y - s.vy) * k;
+        avoidDeep(sys, s);
+
+        s.cx = clamp(s.cx + s.vx * dt, MINX, MAXX);
+        s.cy = clamp(s.cy + s.vy * dt, MINY, MAXY);
+
+        // Column reaching the basin floor -> stacked, exception complete.
+        if (s.mode === 'column'){
+          var d = sys.terrain.features.deepest;
+          if (dist(s.cx, s.cy, d.x, d.y) <= 4){
+            s.mode = 'stacked';
+            s.vx = 0; s.vy = 0;
+            sys.exceptionDone = true;
+            events.push({ type: 'exceptionStacked', id: s.id, x: s.cx, y: s.cy, depth: d.d });
+          }
+        }
+      }
+      return events;
+    }
+
+    // Dead-reckoning for right-spot scoring.
+    function predict(sys, storm, secondsAhead){
+      return {
+        x: clamp(storm.cx + storm.vx * secondsAhead, MINX, MAXX),
+        y: clamp(storm.cy + storm.vy * secondsAhead, MINY, MAXY)
+      };
+    }
+
+    function createTracker(){
+      return { stormId: null, locked: 0, need: 60, done: false };
+    }
+
+    // Telemetry gaps pause the lock rather than resetting it.
+    function updateTracker(tracker, sys, cursorPos, dt){
+      if (tracker.done) return null;
+      if (tracker.stormId == null) return null;
+
+      var s = null, i;
+      for (i = 0; i < sys.storms.length; i++){
+        if (sys.storms[i].id === tracker.stormId){ s = sys.storms[i]; break; }
+      }
+      if (!s){ // tracked storm rained out before lock completed
+        tracker.locked = 0;
+        tracker.stormId = null;
+        return { type: 'trackLost' };
+      }
+      if (dist(cursorPos.x, cursorPos.y, s.cx, s.cy) <= s.r + 1.5){
+        tracker.locked += dt;
+        if (tracker.locked >= tracker.need){
+          tracker.done = true;
+          return { completed: true };
+        }
+      }
+      return null;
+    }
+
+    var api = {
+      createStormSystem: createStormSystem,
+      update: update,
+      predict: predict,
+      createTracker: createTracker,
+      updateTracker: updateTracker
+    };
+    return api;
+  });
+
+
